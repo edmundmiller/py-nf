@@ -3,16 +3,38 @@ Minimal MCP server for py-nf Nextflow execution.
 
 Run with: pynf-mcp
 """
-from mcp.server.fastmcp import FastMCP
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.session import ServerSession
+
+from .engine import NextflowEngine
 from .tools import run_nfcore_module as _run_nfcore_module
 from . import run_module as _run_module
 
+
+@dataclass
+class AppContext:
+    """Application context with pre-initialized Nextflow engine."""
+    engine: NextflowEngine
+
+
+@asynccontextmanager
+async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
+    """Warm up JVM on startup to avoid cold start latency."""
+    # Initialize Nextflow engine (starts JVM, loads classes)
+    engine = NextflowEngine()
+    yield AppContext(engine=engine)
+    # JVM cleanup handled by jpype on process exit
+
+
 mcp = FastMCP(
     "py-nf",
-    instructions="""Nextflow workflow execution. First JVM call is slow (~5-10s).
-For nf-core modules: use docker_enabled=True for proper containers.""",
+    instructions="Nextflow workflow execution. JVM is pre-warmed. Use docker_enabled=True for nf-core modules.",
+    lifespan=app_lifespan,
 )
 
 
