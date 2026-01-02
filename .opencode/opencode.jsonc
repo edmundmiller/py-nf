@@ -2,7 +2,12 @@
   "mcp": {
     "py-nf": {
       "type": "local",
-      "command": ["uv", "run", "pynf-mcp"]
+      "command": [
+        "uv",
+        "run",
+        "pynf-mcp"
+      ]
     }
-  }
+  },
+  "$schema": "https://opencode.ai/config.json"
 }
