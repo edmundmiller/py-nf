@@ -3,6 +3,7 @@ Minimal MCP server for py-nf Nextflow execution.
 
 Run with: pynf-mcp
 """
+
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from . import run_module as _run_module
 @dataclass
 class SavedProcess:
     """A process saved to the workflow session."""
+
     name: str
     code: str
     module_ref: str | None  # e.g., "nf-core/fastqc"
@@ -30,23 +32,31 @@ class SavedProcess:
 @dataclass
 class AppContext:
     """Application context with pre-initialized Nextflow engine."""
+
     engine: NextflowEngine | None
     saved_processes: dict[str, SavedProcess] = field(default_factory=dict)
 
 
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
-    """Warm up JVM on startup to avoid cold start latency."""
-    # Initialize Nextflow engine (starts JVM, loads classes)
-    # Engine is optional - composition tools work without it
-    engine = None
-    try:
-        engine = NextflowEngine()
-    except FileNotFoundError as e:
-        import sys
-        print(f"Warning: {e}", file=sys.stderr)
-        print("Execution tools (run_module, run_nfcore_module) will be unavailable.", file=sys.stderr)
-        print("Composition tools (save_process, list_saved_processes, export_workflow) will work.", file=sys.stderr)
+    """Initialize and validate Nextflow engine on startup."""
+    import sys
+    from .config import validate_nextflow_setup
+
+    # Pre-flight check: Validate Nextflow is available and working
+    success, message = validate_nextflow_setup()
+    if not success:
+        print("\n" + "=" * 60, file=sys.stderr)
+        print("FATAL: py-nf MCP server cannot start", file=sys.stderr)
+        print("=" * 60, file=sys.stderr)
+        print(message, file=sys.stderr)
+        print("=" * 60 + "\n", file=sys.stderr)
+        sys.exit(1)
+
+    # Validation passed - initialize engine
+    print(f"Nextflow ready: {message.splitlines()[0]}", file=sys.stderr)
+    engine = NextflowEngine()
+
     yield AppContext(engine=engine)
     # JVM cleanup handled by jpype on process exit
 
@@ -143,12 +153,14 @@ def list_saved_processes() -> dict[str, Any]:
     for name, proc in _saved_processes.items():
         # Show first 100 chars of code as preview
         preview = proc.code[:100] + "..." if len(proc.code) > 100 else proc.code
-        processes.append({
-            "name": name,
-            "module_ref": proc.module_ref,
-            "saved_at": proc.saved_at.isoformat(),
-            "code_preview": preview,
-        })
+        processes.append(
+            {
+                "name": name,
+                "module_ref": proc.module_ref,
+                "saved_at": proc.saved_at.isoformat(),
+                "code_preview": preview,
+            }
+        )
     return {
         "total": len(processes),
         "processes": processes,
@@ -169,7 +181,10 @@ def export_workflow(
         include_stub: Add workflow{} stub for wiring
     """
     if not _saved_processes:
-        return {"success": False, "error": "No processes saved. Use save_process first."}
+        return {
+            "success": False,
+            "error": "No processes saved. Use save_process first.",
+        }
 
     # Build the file content
     lines = [
@@ -188,12 +203,14 @@ def export_workflow(
         lines.append("")
 
     if include_stub:
-        lines.extend([
-            f"workflow {workflow_name} {{",
-            "    // TODO: Wire processes together",
-            f"    // Available processes: {', '.join(process_names)}",
-            "}",
-        ])
+        lines.extend(
+            [
+                f"workflow {workflow_name} {{",
+                "    // TODO: Wire processes together",
+                f"    // Available processes: {', '.join(process_names)}",
+                "}",
+            ]
+        )
 
     content = "\n".join(lines)
 
