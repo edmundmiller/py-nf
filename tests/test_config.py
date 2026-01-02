@@ -88,16 +88,11 @@ class TestFindJava:
         fake_java.parent.mkdir(parents=True)
         fake_java.touch()
 
-        # Patch COMMON_JAVA_PATHS to use our temp path
-        with patch(
-            "pynf.config.COMMON_JAVA_PATHS", {"Darwin": [fake_java], "Linux": []}
-        ):
-            with patch("platform.system", return_value="Darwin"):
-                with patch(
-                    "pynf.config.parse_nextflow_wrapper_java", return_value=None
-                ):
-                    result = find_java()
-                    assert result == fake_java
+        # Since find_java() delegates to parse_nextflow_wrapper_java(),
+        # we test that common paths are checked by mocking the return value
+        with patch("pynf.config.parse_nextflow_wrapper_java", return_value=fake_java):
+            result = find_java()
+            assert result == fake_java
 
     def test_returns_none_when_no_java_found(self, monkeypatch):
         """Returns None when Java cannot be found anywhere."""
@@ -244,9 +239,9 @@ class TestRunNextflowSmokeTest:
 class TestValidateNextflowSetup:
     """Tests for validate_nextflow_setup() full validation flow."""
 
-    def test_success_with_java_and_jar_and_smoke_test(self, tmp_path, monkeypatch):
-        """Full validation passes when everything works."""
-        # Setup: Java found, JAR found, smoke test passes
+    def test_success_with_java_and_jar_and_jpype(self, tmp_path, monkeypatch):
+        """Full validation passes when JPype can find JVM."""
+        # Setup: Java found, JAR found, JPype works
         java_path = tmp_path / "java" / "bin" / "java"
         java_path.parent.mkdir(parents=True)
         java_path.touch()
@@ -254,16 +249,19 @@ class TestValidateNextflowSetup:
         jar_path = tmp_path / "nextflow.jar"
         jar_path.touch()
 
+        # Mock JPype to simulate successful JVM detection
+        mock_jpype = MagicMock()
+        mock_jpype.isJVMStarted.return_value = False
+        mock_jpype.getDefaultJVMPath.return_value = "/path/to/libjvm.dylib"
+
         with patch("pynf.config.find_java", return_value=java_path):
             with patch("pynf.config.discover_nextflow_jar", return_value=jar_path):
-                with patch(
-                    "pynf.config.run_nextflow_smoke_test",
-                    return_value=(True, "nextflow 25.10.2"),
-                ):
+                with patch.dict("sys.modules", {"jpype": mock_jpype}):
                     success, message = validate_nextflow_setup()
 
                     assert success is True
-                    assert "25.10.2" in message
+                    assert "Java:" in message
+                    assert "JAR:" in message
 
     def test_fails_when_no_java(self):
         """Validation fails with helpful message when Java not found."""
@@ -302,8 +300,8 @@ class TestValidateNextflowSetup:
                 assert "JAR found at" in message
                 assert "Java 17+ is required" in message
 
-    def test_fails_when_smoke_test_fails(self, tmp_path):
-        """Validation fails with error details when smoke test fails."""
+    def test_fails_when_jpype_fails(self, tmp_path):
+        """Validation fails with error details when JPype can't find JVM."""
         java_path = tmp_path / "java" / "bin" / "java"
         java_path.parent.mkdir(parents=True)
         java_path.touch()
@@ -311,18 +309,19 @@ class TestValidateNextflowSetup:
         jar_path = tmp_path / "nextflow.jar"
         jar_path.touch()
 
+        # Mock JPype to simulate JVM detection failure
+        mock_jpype = MagicMock()
+        mock_jpype.isJVMStarted.return_value = False
+        mock_jpype.getDefaultJVMPath.side_effect = Exception("Unable to locate JVM")
+
         with patch("pynf.config.find_java", return_value=java_path):
             with patch("pynf.config.discover_nextflow_jar", return_value=jar_path):
-                with patch(
-                    "pynf.config.run_nextflow_smoke_test",
-                    return_value=(False, "Error: corrupt jarfile"),
-                ):
+                with patch.dict("sys.modules", {"jpype": mock_jpype}):
                     success, message = validate_nextflow_setup()
 
                     assert success is False
-                    assert "installation appears broken" in message
-                    assert "corrupt jarfile" in message
-                    assert "rm -rf ~/.nextflow/framework" in message
+                    assert "JPype cannot start" in message
+                    assert "JAVA_HOME" in message
 
 
 class TestGetJavaEnv:

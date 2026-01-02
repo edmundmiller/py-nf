@@ -1,10 +1,11 @@
 import logging
+import os
 import jpype
 import jpype.imports
 from pathlib import Path
 from dotenv import load_dotenv
 from pynf.input_validation import InputValidator
-from pynf.config import get_nextflow_jar
+from pynf.config import get_nextflow_jar, find_java
 
 # Load environment variables from .env file (for JAVA_HOME, etc.)
 load_dotenv()
@@ -140,8 +141,15 @@ class NextflowEngine:
             if not jar_path.exists():
                 raise FileNotFoundError(f"Nextflow JAR not found: {nextflow_jar_path}")
 
-        # Start JVM with Nextflow classpath
+        # Find and set JAVA_HOME for JPype before starting JVM
         if not jpype.isJVMStarted():
+            java_path = find_java()
+            if java_path:
+                # Set JAVA_HOME so JPype can find the JVM
+                java_home = java_path.parent.parent  # /path/to/bin/java -> /path/to
+                os.environ["JAVA_HOME"] = str(java_home)
+                logger.debug(f"Set JAVA_HOME={java_home} for JPype")
+
             jpype.startJVM(classpath=[str(jar_path)])
 
         # Import Nextflow classes after JVM is started

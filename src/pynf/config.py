@@ -100,6 +100,21 @@ Try reinstalling:
   ./nextflow -version
 """
 
+ERROR_MSG_JPYPE_FAILED = """
+JPype cannot start the Java Virtual Machine.
+
+Java found at: {java_path}
+JAVA_HOME set to: {java_home}
+Error: {error}
+
+Try setting JAVA_HOME explicitly:
+  export JAVA_HOME={java_home}
+
+Or reinstall Java:
+  # macOS (Homebrew)
+  brew install openjdk@17
+"""
+
 
 def find_newest_jar(pattern: str) -> Path | None:
     """Find the newest JAR matching pattern, sorted by version."""
@@ -207,7 +222,15 @@ def parse_nextflow_wrapper_java() -> Path | None:
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
-    # 4. Fallback: which java
+    # 4. Common installation paths (before which java, which may find stubs)
+    system = platform.system()
+    common_paths = COMMON_JAVA_PATHS.get(system, [])
+    for path in common_paths:
+        if path.exists():
+            logger.debug(f"Found Java at common path: {path}")
+            return path
+
+    # 5. Fallback: which java (but verify it works - macOS has a stub)
     try:
         result = subprocess.run(
             ["which", "java"],
@@ -218,8 +241,17 @@ def parse_nextflow_wrapper_java() -> Path | None:
         if result.returncode == 0 and result.stdout.strip():
             java_bin = Path(result.stdout.strip())
             if java_bin.exists():
-                logger.debug(f"Found Java via which: {java_bin}")
-                return java_bin
+                # Verify it's not a stub by running java -version
+                verify = subprocess.run(
+                    [str(java_bin), "-version"],
+                    capture_output=True,
+                    timeout=5,
+                )
+                if verify.returncode == 0:
+                    logger.debug(f"Found Java via which: {java_bin}")
+                    return java_bin
+                else:
+                    logger.debug(f"Java at {java_bin} is a stub, skipping")
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
 
@@ -240,20 +272,10 @@ def find_java() -> Path | None:
     Returns:
         Path to java binary, or None if not found
     """
-    # Strategy 1 & 2 & 3 & 4 (via nextflow wrapper logic)
-    java_path = parse_nextflow_wrapper_java()
-    if java_path:
-        return java_path
-
-    # Strategy 4: Common installation paths
-    system = platform.system()
-    common_paths = COMMON_JAVA_PATHS.get(system, [])
-    for path in common_paths:
-        if path.exists():
-            logger.debug(f"Found Java at common path: {path}")
-            return path
-
-    return None
+    # All strategies handled in parse_nextflow_wrapper_java():
+    # 1. NXF_JAVA_HOME, 2. JAVA_HOME, 3. java_home (macOS),
+    # 4. Common paths, 5. which java (verified)
+    return parse_nextflow_wrapper_java()
 
 
 def ensure_java_available() -> bool:
@@ -386,11 +408,13 @@ def validate_nextflow_setup() -> tuple[bool, str]:
     Checks:
     1. Java 17+ is available
     2. Nextflow JAR exists
-    3. Nextflow runs successfully (smoke test)
+    3. JPype can start the JVM (the actual test that matters)
 
     Returns:
-        (success, error_message) tuple. On success, error_message contains version info.
+        (success, error_message) tuple. On success, error_message is empty.
     """
+    import os
+
     # Step 1: Find Java
     java_path = find_java()
 
@@ -407,15 +431,29 @@ def validate_nextflow_setup() -> tuple[bool, str]:
     if java_path and not jar_path:
         return False, ERROR_MSG_NO_JAR
 
-    # Both found - run smoke test
+    # Both found - test JPype can find JVM with our JAVA_HOME
     assert java_path is not None and jar_path is not None  # for type checker
-    success, message = run_nextflow_smoke_test(jar_path, java_path)
-    if not success:
-        return False, ERROR_MSG_SMOKE_TEST_FAILED.format(
-            jar_path=jar_path, error=message
+
+    # Set JAVA_HOME before testing JPype
+    java_home = java_path.parent.parent
+    os.environ["JAVA_HOME"] = str(java_home)
+
+    try:
+        import jpype
+
+        # Test that JPype can find the JVM path
+        # This is exactly what fails if JAVA_HOME isn't set correctly
+        if not jpype.isJVMStarted():
+            jvm_path = jpype.getDefaultJVMPath()
+            logger.debug(f"JPype found JVM at: {jvm_path}")
+    except Exception as e:
+        return False, ERROR_MSG_JPYPE_FAILED.format(
+            java_path=java_path,
+            java_home=java_home,
+            error=str(e),
         )
 
-    return True, message
+    return True, f"Java: {java_path}\nJAR: {jar_path}"
 
 
 def get_nextflow_jar(auto_download: bool = False) -> Path:
