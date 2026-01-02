@@ -30,7 +30,7 @@ class SavedProcess:
 @dataclass
 class AppContext:
     """Application context with pre-initialized Nextflow engine."""
-    engine: NextflowEngine
+    engine: NextflowEngine | None
     saved_processes: dict[str, SavedProcess] = field(default_factory=dict)
 
 
@@ -38,7 +38,15 @@ class AppContext:
 async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     """Warm up JVM on startup to avoid cold start latency."""
     # Initialize Nextflow engine (starts JVM, loads classes)
-    engine = NextflowEngine()
+    # Engine is optional - composition tools work without it
+    engine = None
+    try:
+        engine = NextflowEngine()
+    except FileNotFoundError as e:
+        import sys
+        print(f"Warning: {e}", file=sys.stderr)
+        print("Execution tools (run_module, run_nfcore_module) will be unavailable.", file=sys.stderr)
+        print("Composition tools (save_process, list_saved_processes, export_workflow) will work.", file=sys.stderr)
     yield AppContext(engine=engine)
     # JVM cleanup handled by jpype on process exit
 
