@@ -1,19 +1,19 @@
-import os
 import logging
 import jpype
 import jpype.imports
 from pathlib import Path
 from dotenv import load_dotenv
 from pynf.input_validation import InputValidator
+from pynf.config import get_nextflow_jar
 
-# Load environment variables from .env file
+# Load environment variables from .env file (for JAVA_HOME, etc.)
 load_dotenv()
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
 
 
-def validate_meta_map(meta: dict, required_fields: list[str] = None):
+def validate_meta_map(meta: dict, required_fields: list[str] | None = None):
     """
     Validate meta map contains required fields.
 
@@ -30,7 +30,7 @@ def validate_meta_map(meta: dict, required_fields: list[str] = None):
         ValueError: Missing required meta field: id
     """
     if required_fields is None:
-        required_fields = ['id']  # 'id' is always required
+        required_fields = ["id"]  # 'id' is always required
 
     missing_fields = [field for field in required_fields if field not in meta]
 
@@ -132,35 +132,17 @@ class _WorkflowOutputCollector:
 
 class NextflowEngine:
     def __init__(self, nextflow_jar_path=None):
-        # Use provided path, or environment variable, or default
+        # Auto-discover JAR if not provided
         if nextflow_jar_path is None:
-            nextflow_jar_path = os.getenv(
-                "NEXTFLOW_JAR_PATH",
-                "nextflow/build/releases/nextflow-25.10.0-one.jar"
-            )
-
-        # Check if JAR file exists
-        jar_path = Path(nextflow_jar_path)
-        if not jar_path.exists():
-            error_msg = (
-                f"\n{'='*70}\n"
-                f"ERROR: Nextflow JAR not found at: {nextflow_jar_path}\n"
-                f"{'='*70}\n\n"
-                f"This project requires a Nextflow fat JAR to run.\n\n"
-                f"To set up Nextflow automatically, run:\n"
-                f"    python setup_nextflow.py\n\n"
-                f"This will clone and build Nextflow for you.\n\n"
-                f"Alternatively, you can set up manually:\n"
-                f"1. Clone: git clone https://github.com/nextflow-io/nextflow.git\n"
-                f"2. Build: cd nextflow && make pack\n"
-                f"3. Update .env with the JAR path\n"
-                f"{'='*70}\n"
-            )
-            raise FileNotFoundError(error_msg)
+            jar_path = get_nextflow_jar(auto_download=True)
+        else:
+            jar_path = Path(nextflow_jar_path)
+            if not jar_path.exists():
+                raise FileNotFoundError(f"Nextflow JAR not found: {nextflow_jar_path}")
 
         # Start JVM with Nextflow classpath
         if not jpype.isJVMStarted():
-            jpype.startJVM(classpath=[nextflow_jar_path])
+            jpype.startJVM(classpath=[str(jar_path)])
 
         # Import Nextflow classes after JVM is started
         self.ScriptLoaderFactory = jpype.JClass("nextflow.script.ScriptLoaderFactory")
@@ -173,7 +155,16 @@ class NextflowEngine:
         # Return the Path object for script loading
         return Path(nf_file_path)
 
-    def execute(self, script_path, executor="local", params=None, inputs=None, config=None, docker_config=None, verbose=False):
+    def execute(
+        self,
+        script_path,
+        executor="local",
+        params=None,
+        inputs=None,
+        config=None,
+        docker_config=None,
+        verbose=False,
+    ):
         """
         Execute a Nextflow script with optional Docker configuration.
 
@@ -196,14 +187,12 @@ class NextflowEngine:
         if verbose:
             logging.basicConfig(
                 level=logging.DEBUG,
-                format='%(levelname)s: %(message)s',
-                force=True  # Override any existing config
+                format="%(levelname)s: %(message)s",
+                force=True,  # Override any existing config
             )
         else:
             logging.basicConfig(
-                level=logging.WARNING,
-                format='%(levelname)s: %(message)s',
-                force=True
+                level=logging.WARNING, format="%(levelname)s: %(message)s", force=True
             )
 
         # Configure Java/Nextflow logging level
@@ -251,7 +240,9 @@ class NextflowEngine:
         if inputs:
             # Validate inputs against expected structure
             InputValidator.validate_inputs(inputs, input_channels)
-            logger.debug(f"Validation passed, setting params for {len(inputs)} input groups")
+            logger.debug(
+                f"Validation passed, setting params for {len(inputs)} input groups"
+            )
             self._set_params_from_inputs(session, input_channels, inputs)
             logger.debug(f"Session params after setting: {dict(session.getParams())}")
 
@@ -265,13 +256,16 @@ class NextflowEngine:
             loader.runScript()
             session.fireDataflowNetwork(False)
             session.await_()
-            logger.debug(f"After await, collected {len(collector.task_workdirs())} workdirs")
+            logger.debug(
+                f"After await, collected {len(collector.task_workdirs())} workdirs"
+            )
         finally:
             if observer_registered:
                 self._unregister_output_observer(session, observer_proxy)
             session.destroy()
 
         from .result import NextflowResult
+
         return NextflowResult(
             script,
             session,
@@ -330,33 +324,26 @@ class NextflowEngine:
         inner = inp.getInner()
 
         for component in inner:
-            components.append({
-                'type': str(component.getTypeName()),
-                'name': str(component.getName())
-            })
+            components.append(
+                {"type": str(component.getTypeName()), "name": str(component.getName())}
+            )
 
         return components
 
     def _extract_simple_param(self, inp):
         """Extract a simple (non-tuple) input parameter."""
-        return {
-            'type': str(inp.getTypeName()),
-            'name': str(inp.getName())
-        }
+        return {"type": str(inp.getTypeName()), "name": str(inp.getName())}
 
     def _build_channel_info(self, inp):
         """Build channel info dict from an input parameter."""
-        channel_info = {
-            'type': str(inp.getTypeName()),
-            'params': []
-        }
+        channel_info = {"type": str(inp.getTypeName()), "params": []}
 
         # Handle tuple inputs
-        if hasattr(inp, 'getInner') and inp.getInner() is not None:
-            channel_info['params'] = self._extract_tuple_components(inp)
+        if hasattr(inp, "getInner") and inp.getInner() is not None:
+            channel_info["params"] = self._extract_tuple_components(inp)
         else:
             # Simple input (val, path, etc.)
-            channel_info['params'].append(self._extract_simple_param(inp))
+            channel_info["params"].append(self._extract_simple_param(inp))
 
         return channel_info
 
@@ -432,12 +419,12 @@ class NextflowEngine:
 
         # Iterate through each input group and set parameters
         for input_dict, channel_info in zip(inputs, input_channels):
-            channel_params = channel_info.get('params', [])
+            channel_params = channel_info.get("params", [])
 
             # For each parameter in this channel, set its value in session.params
             for param_info in channel_params:
-                param_name = param_info['name']
-                param_type = param_info['type']
+                param_name = param_info["name"]
+                param_type = param_info["type"]
 
                 if param_name not in input_dict:
                     continue
@@ -478,7 +465,7 @@ class NextflowEngine:
             return ",".join(str(v) for v in value)
 
         # For path types, convert to string
-        if param_type == 'path':
+        if param_type == "path":
             return str(value)
 
         # For val types, return as-is (let JPype handle conversion)
