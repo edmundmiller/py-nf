@@ -1,0 +1,26 @@
+{
+  "name": "opencode-py-nf",
+  "version": "0.1.0",
+  "description": "OpenCode plugin for py-nf Nextflow execution via MCP",
+  "main": "plugin.js",
+  "types": "plugin.d.ts",
+  "keywords": ["opencode", "opencode-plugin", "nextflow", "py-nf", "mcp", "bioinformatics"],
+  "author": "Edmund Miller",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edmundmiller/opencode-py-nf.git"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.0.0"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.0.128",
+    "typescript": "^5.0.0"
+  },
+  "files": ["plugin.js", "plugin.d.ts", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "bun run build"
+  }
+}

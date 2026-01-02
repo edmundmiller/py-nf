@@ -25,3 +25,9 @@ nf_core_list_cache/
 # pynf-agent workspace
 agent_workspace/
 *.gz
+
+# Node.js / TypeScript (OpenCode plugin)
+node_modules/
+bun.lock
+package-lock.json
+yarn.lock

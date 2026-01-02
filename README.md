@@ -12,6 +12,25 @@ Run Nextflow modules directly from Python while keeping access to the full set o
 from pynf import run_module; run_module("nextflow_scripts/file-output-process.nf")
 ```
 
+## OpenCode Plugin
+
+This repo includes an OpenCode plugin for MCP integration. Setup:
+
+```bash
+bun install  # or npm install
+```
+
+Add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "plugins": [{ "name": "py-nf", "path": "/path/to/py-nf", "enabled": true }],
+  "mcp": { "py-nf": { "command": ["uv", "run", "pynf-mcp"], "enabled": true } }
+}
+```
+
+See [PLUGIN.md](PLUGIN.md) for details.
+
 Behind that one-liner the library:
 
 * Loads `.nf` scripts and modules without rewriting them.
@@ -20,6 +39,7 @@ Behind that one-liner the library:
 
 ## Table of Contents
 
+- [OpenCode Plugin](#opencode-plugin)
 - [Prerequisites](#prerequisites)
 - [Nextflow Setup](#nextflow-setup)
 - [Installation & test drive](#installation--test-drive)

@@ -1,0 +1,8 @@
+{
+  "mcp": {
+    "py-nf": {
+      "type": "local",
+      "command": ["uv", "run", "pynf-mcp"]
+    }
+  }
+}
